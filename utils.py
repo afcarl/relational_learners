@@ -1,11 +1,38 @@
 """
 Standard functions used to support relational learning
 """
-from planners.fo_planner import Operator
-from planners.fo_planner import build_index
+from fo_planner import Operator
+from fo_planner import build_index
 # from planners.fo_planner import subst
-# from planners.fo_planner import extract_strings
-from planners.fo_planner import is_variable
+from fo_planner import is_variable
+from fo_planner import extract_strings
+
+
+def score(self, n_pos, n_neg, length):
+    return n_pos - n_neg - 0.01 * length
+
+
+def get_variablizations(literal, gensym):
+    for i, ele in enumerate(literal[1:]):
+        if isinstance(ele, tuple):
+            for inner in get_variablizations(ele, gensym):
+                yield tuple([literal[0]] + [inner if j == i else iele for j,
+                                            iele in enumerate(literal[1:])])
+        elif not is_variable(ele):
+            yield tuple([literal[0]] + [gensym() if j == i else iele for j,
+                                        iele in enumerate(literal[1:])])
+
+
+def count_occurances(var, h):
+    return len([s for x in h for s in extract_strings(x) if s == var])
+
+
+def test_coverage(h, constraints, pset, nset):
+    new_pset = [(p, pm) for p, pm in pset if
+                covers(h.union(constraints), p, pm)]
+    new_nset = [(n, nm) for n, nm in nset if
+                covers(h.union(constraints), n, nm)]
+    return new_pset, new_nset
 
 
 def covers(h, x, initial_mapping):
@@ -26,6 +53,12 @@ def rename(mapping, literal):
     """
     return tuple(mapping[ele] if ele in mapping else rename(mapping, ele) if
                  isinstance(ele, tuple) else ele for ele in literal)
+
+def generate_literal(relation, arity, gensym):
+    """
+    Returns a new literal with novel variables.
+    """
+    return (relation,) + tuple(gensym() for i in range(arity))
 
 
 def generalize_literal(literal, gensym):
@@ -71,7 +104,7 @@ def count_elements(x, var_counts):
     """
     c = 0
     if isinstance(x, tuple):
-        c = sum([count_term(ele, var_counts) for ele in x])
+        c = sum([count_elements(ele, var_counts) for ele in x])
     elif is_variable(x):
         if x not in var_counts:
             var_counts[x] = 0
