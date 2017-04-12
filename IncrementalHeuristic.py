@@ -135,7 +135,7 @@ class ClauseOptimizationProblem(Problem):
         possible_literals, flip_weights, constraints, pset, nset = node.extra
         index = weighted_choice(flip_weights)
         new_j = choice([j for j in range(len(possible_literals[index]))
-                        if j != clause_vector[i]])
+                        if j != clause_vector[index]])
         new_clause_vector = tuple(new_j if i == index else j for i, j in
                                   enumerate(clause_vector))
         score = clause_vector_score(new_clause_vector, possible_literals,
@@ -149,7 +149,7 @@ class ClauseOptimizationProblem(Problem):
 
         for index in possible_literals:
             for new_j in range(len(possible_literals[index])):
-                if new_j == clause_vector[i]:
+                if new_j == clause_vector[index]:
                     continue
 
                 new_clause_vector = tuple(new_j if i == index else j for i, j
@@ -158,7 +158,7 @@ class ClauseOptimizationProblem(Problem):
                                             possible_literals, constraints,
                                             pset, nset)
                 yield Node(new_clause_vector, None, None, -1 * score,
-                            extra=node.extra)
+                           extra=node.extra)
 
 
 class IncrementalHeuristic(object):
@@ -225,19 +225,19 @@ class IncrementalHeuristic(object):
             self.h = self.compute_bottom_clause(x, mapping)
             # print("ADDING BOTTOM", self.h)
 
-        if self.h is not None:
-            self.h = optimize_clause(self.h, self.constraints, self.pset,
-                                     self.nset)
-            c_length = clause_length(self.h)
-            p_covered, n_covered = test_coverage(self.h, self.constraints,
-                                                 self.pset, self.nset)
-            p_uncovered = [p for p in self.pset if p not in p_covered]
-            n_uncovered = [n for n in self.nset if n not in n_covered]
-            score = clause_score(clause_accuracy_weight, len(p_covered),
-                                 len(p_uncovered), len(n_covered),
-                                 len(n_uncovered), c_length)
+        # if self.h is not None:
+        #     self.h = optimize_clause(self.h, self.constraints, self.pset,
+        #                              self.nset)
+        #     c_length = clause_length(self.h)
+        #     p_covered, n_covered = test_coverage(self.h, self.constraints,
+        #                                          self.pset, self.nset)
+        #     p_uncovered = [p for p in self.pset if p not in p_covered]
+        #     n_uncovered = [n for n in self.nset if n not in n_covered]
+        #     score = clause_score(clause_accuracy_weight, len(p_covered),
+        #                          len(p_uncovered), len(n_covered),
+        #                          len(n_uncovered), c_length)
 
-            # print("OVERALL SCORE", score)
+        #     print("OVERALL SCORE", score)
 
 
 if __name__ == "__main__":

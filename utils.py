@@ -2,6 +2,7 @@
 Standard functions used to support relational learning
 """
 from random import uniform
+from itertools import product
 
 from fo_planner import Operator
 from fo_planner import build_index
@@ -25,15 +26,21 @@ def weighted_choice(choices):
 
 
 def get_variablizations(literal):
-    for i, ele in enumerate(literal[1:]):
-        if isinstance(ele, tuple):
-            for inner in get_variablizations(ele):
-                yield tuple([literal[0]] + [inner if j == i else iele for j,
-                                            iele in enumerate(literal[1:])])
-        elif not is_variable(ele):
-            yield tuple([literal[0]] + ['?gen%i' % hash(ele) if j == i else
-                                        iele for j, iele in
-                                        enumerate(literal[1:])])
+    """
+    Takes a literal and returns all possible variablizations of it. Currently,
+    this replaces constants only. Also, it replaces them with a variable that
+    is generated based on the hash of the constant, so that similar constants
+    map to the same variable.
+    """
+    if isinstance(literal, tuple):
+        head = literal[0]
+        possible_bodies = [[e] + list(get_variablizations(e)) for e in
+                           literal[1:]]
+        for body in product(*possible_bodies):
+            yield (head,) + tuple(body)
+
+    elif not is_variable(literal):
+        yield '?gen%i' % hash(literal)
 
 
 def count_occurances(var, h):
