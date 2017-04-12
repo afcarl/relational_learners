@@ -11,20 +11,11 @@ from py_search.optimization import hill_climbing
 
 from fo_planner import Operator
 from fo_planner import build_index
-# from fo_planner import subst
-# from fo_planner import extract_strings
-# from fo_planner import is_variable
 
-# from utils import covers
 from utils import rename
-# from utils import generalize_literal
-# from utils import remove_vars
 from utils import clause_length
 from utils import test_coverage
-# from utils import generate_literal
-# from utils import count_occurances
 from utils import get_variablizations
-# from utils import count_elements
 from utils import weighted_choice
 
 clause_accuracy_weight = 0.95
@@ -193,8 +184,8 @@ class IncrementalHeuristic(object):
         self.constraints = constraints
         self.pset = []
         self.nset = []
-        self.h = None
-        # self.h = frozenset([])
+        # self.h = None
+        self.h = frozenset([])
         self.gen_counter = 0
 
     def gensym(self):
