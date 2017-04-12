@@ -6,25 +6,26 @@ from random import choice
 
 from py_search.base import Problem
 from py_search.base import Node
-from py_search.optimization import branch_and_bound
 from py_search.optimization import simulated_annealing
+from py_search.optimization import hill_climbing
 
 from fo_planner import Operator
 from fo_planner import build_index
-from fo_planner import subst
-from fo_planner import extract_strings
-from fo_planner import is_variable
+# from fo_planner import subst
+# from fo_planner import extract_strings
+# from fo_planner import is_variable
 
-from utils import covers
+# from utils import covers
 from utils import rename
-from utils import generalize_literal
-from utils import remove_vars
+# from utils import generalize_literal
+# from utils import remove_vars
 from utils import clause_length
 from utils import test_coverage
-from utils import generate_literal
-from utils import count_occurances
+# from utils import generate_literal
+# from utils import count_occurances
 from utils import get_variablizations
-from utils import count_elements
+# from utils import count_elements
+from utils import weighted_choice
 
 clause_accuracy_weight = 0.95
 
@@ -38,7 +39,24 @@ def clause_score(accuracy_weight, p_covered, p_uncovered, n_covered,
 
 
 def build_clause(v, possible_literals):
-    return frozenset([possible_literals[i][j] for i, j in enumerate(v)])
+    return frozenset([possible_literals[i][j] for i, j in enumerate(v) if
+                      possible_literals[i][j] is not None])
+
+
+def clause_vector_score(v, possible_literals, constraints, pset, nset):
+    h = build_clause(v, possible_literals)
+    l = clause_length(h)
+    p_covered, n_covered = test_coverage(h, constraints, pset, nset)
+    return clause_score(clause_accuracy_weight, len(p_covered), len(pset) -
+                        len(p_covered), len(n_covered), len(nset) -
+                        len(n_covered), l)
+
+
+def compute_bottom_clause(x, mapping):
+    reverse_m = {mapping[a]: a for a in mapping}
+    # print("REVERSEM", reverse_m)
+    partial = set([rename(reverse_m, l) for l in x])
+    return frozenset(partial)
 
 
 def optimize_clause(h, constraints, pset, nset, gensym):
@@ -53,39 +71,60 @@ def optimize_clause(h, constraints, pset, nset, gensym):
     initial_score = clause_score(clause_accuracy_weight, len(p_covered),
                                  len(p_uncovered), len(n_covered),
                                  len(n_uncovered), c_length)
-    if len(p_covered) > 0:
-        p, pm = choice(p_covered)
-        p_index = build_index(p)
-
-        operator = Operator(tuple(('Rule',)),
-                            h.union(constraints), [])
-
-        for m in operator.match(p_index, initial_mapping=pm):
-            reverse_m = {m[a]: a for a in m}
-            pos_partial = set([rename(reverse_m, x) for x in p])
-            print('POS PARTIAL', pos_partial)
-            break
+    p, pm = choice(p_covered)
+    pos_partial = list(compute_bottom_clause(p, pm))
+    # print('POS PARTIAL', pos_partial)
 
     # TODO if we wanted we could add the introduction of new variables to the
     # get_variablizations function.
     possible_literals = {}
     for i, l in enumerate(pos_partial):
         possible_literals[i] = [None, l] + [v for v in get_variablizations(l)]
+    partial_literals = set([l for i in possible_literals for l in
+                            possible_literals[i]])
+
+    additional_literals = h - partial_literals
+
+    if len(additional_literals) > 0:
+        p_index = build_index(p)
+        operator = Operator(tuple(('Rule',)),
+                            h.union(constraints), [])
+        for add_m in operator.match(p_index, initial_mapping=pm):
+            break
+        additional_lit_mapping = {rename(add_m, l): l for l in
+                                  additional_literals}
+        for l in additional_lit_mapping:
+            new_l = additional_lit_mapping[l]
+            print(pos_partial)
+            print(add_m)
+            print(l)
+            print(new_l)
+            possible_literals[pos_partial.index(l)].append(new_l)
+
     reverse_pl = {l: (i, j) for i in possible_literals for j, l in
                   enumerate(possible_literals[i])}
 
-    curr = [0 for i in range(len(possible_literals))]
+    clause_vector = [0 for i in range(len(possible_literals))]
     for l in h:
         i, j = reverse_pl[l]
-        curr[i] = j
+        clause_vector[i] = j
+    clause_vector = tuple(clause_vector)
 
-    print('INITIAL SCORE', initial_score)
-    problem = ClauseOptimizationProblem(curr, initial_cost=-1*initial_score,
-                                        extra=(possible_literals, constraints,
-                                               pset, nset))
-    for sol in simulated_annealing(problem, temp_length=30):
-        print("SOLUTION FOUND", sol.state)
-        return sol.state
+    flip_weights = [(len(possible_literals[i])-1, i) for i in
+                    possible_literals]
+
+    num_successors = sum([w for w, c in flip_weights])
+    temp_length = 2 * num_successors
+    # print("TEMP LENGTH", temp_length)
+    # print('INITIAL SCORE', initial_score)
+    problem = ClauseOptimizationProblem(clause_vector,
+                                        initial_cost=-1*initial_score,
+                                        extra=(possible_literals, flip_weights,
+                                               constraints, pset, nset))
+    # for sol in hill_climbing(problem):
+    for sol in simulated_annealing(problem, temp_length=temp_length):
+        # print("SOLUTION FOUND", sol.state)
+        return build_clause(sol.state, possible_literals)
 
 
 class ClauseOptimizationProblem(Problem):
@@ -96,289 +135,35 @@ class ClauseOptimizationProblem(Problem):
         """
         return False
 
-    def simple_random_successor(self, node):
-        s = [c for c in self.successors(node)]
-        if len(s) > 0:
-            return choice(s)
-
     def random_successor(self, node):
-        h = node.state
-        (constraints, c_length, p_covered, p_uncovered, n_covered, n_uncovered,
-         gensym) = node.extra
-
-        new_hs = []
-
-        ####################################
-        # Generate possible specializations
-        ####################################
-        pos_partial = None
-
-        if len(p_covered) > 0:
-            p, pm = choice(p_covered)
-            p_index = build_index(p)
-
-            operator = Operator(tuple(('Rule',)),
-                                h.union(constraints), [])
-
-            for m in operator.match(p_index, initial_mapping=pm):
-                reverse_m = {m[a]: a for a in m}
-                pos_partial = set([rename(reverse_m, x) for x in p])
-                # print('POS PARTIAL', pos_partial)
-                break
-
-        if pos_partial is not None:
-
-            # add new literal
-            for l in pos_partial:
-                if l not in h:
-                    l = generate_literal(l[0], len(l)-1, gensym)
-                    # l = generalize_literal(l, gensym)
-
-                    new_h = h.union([l])
-                    new_hs.append(('spec', new_h))
-
-            # replace unique var with existing var
-            possibly_equal = set()
-            for var1 in m:
-                for var2 in m:
-                    if var1 == var2:
-                        continue
-                    if m[var1] == m[var2]:
-                        pe = frozenset([var1, var2])
-                        possibly_equal.add(pe)
-
-            for pe in possibly_equal:
-                pe = list(pe)
-                rm = {pe[0]: pe[1]}
-                new_h = frozenset([rename(rm, l) for l in h])
-                new_hs.append(('spec', new_h))
-
-            # TODO EACH OCCURANCE, not each var
-            # replace each occurance of existing var with constant
-            for var in m:
-                limited_m = {var: m[var]}
-                new_h = frozenset([subst(limited_m, l) for l in h])
-                new_hs.append(('spec', new_h))
-
-
-        ####################################
-        # Generate possible generalizations
-        ####################################
-        # Remove literal
-        for literal in h:
-            removable = True
-            for ele in literal[1:]:
-                if not is_variable(ele):
-                    removable = False
-                    break
-                if (count_occurances(ele, h) > 1):
-                    removable = False
-                    break
-
-            if removable:
-                new_h = frozenset(x for x in h if x != literal)
-                new_hs.append(('gen', new_h))
-
-        # replace constants with variables.
-        for literal in h:
-            for new_l in get_variablizations(literal, gensym):
-                new_h = frozenset([x if x != literal else new_l for
-                                   x in h])
-                new_hs.append(('gen', new_h))
-
-        ############################################
-        # Choose a new H and generate a node for it
-        ############################################
-        op, new_h = choice(new_hs)
-
-        if op == "spec":
-            new_p_subset, new_n_subset = test_coverage(new_h, constraints,
-                                                       p_covered, n_covered)
-            new_p_covered = new_p_subset
-            new_p_uncovered = p_uncovered + [p for p in p_covered if p not in
-                                             new_p_subset]
-            new_n_covered = new_n_subset
-            new_n_uncovered = n_uncovered + [n for n in n_covered if n not in
-                                             new_n_subset]
-            new_c_length = c_length + 1
-            score = self.score(len(new_p_covered), len(new_p_uncovered),
-                               len(new_n_covered), len(new_n_uncovered),
-                               new_c_length)
-
-            return Node(new_h, None, None, -1 * score,
-                       extra=(constraints, new_c_length, new_p_covered,
-                              new_p_uncovered, new_n_covered,
-                              new_n_uncovered, gensym))
-
-        elif op == 'gen':
-            new_pc_subset, new_nc_subset = test_coverage(new_h,
-                                                         constraints,
-                                                         p_uncovered,
-                                                         n_uncovered)
-            new_p_covered = p_covered + new_pc_subset
-            new_n_covered = n_covered + new_nc_subset
-            new_p_uncovered = [p for p in p_uncovered if p not in
-                               new_pc_subset]
-            new_n_uncovered = [n for n in n_uncovered if n not in
-                               new_nc_subset]
-            new_c_length = c_length - 1
-            score = self.score(len(new_p_covered), len(new_p_uncovered),
-                               len(new_n_covered), len(new_n_uncovered),
-                               new_c_length)
-
-            return Node(new_h, None, None, -1 * score,
-                       extra=(constraints, new_c_length, new_p_covered,
-                              new_p_uncovered, new_n_covered,
-                              new_n_uncovered, gensym))
-
-    def score(self, p_covered, p_uncovered, n_covered, n_uncovered, length):
-        return clause_score(clause_accuracy_weight, p_covered,
-                            p_uncovered, n_covered, n_uncovered, length)
-
-    def gen_specializations(self, node):
-        h = node.state
-        (constraints, c_length, p_covered, p_uncovered, n_covered, n_uncovered,
-         gensym) = node.extra
-
-        if len(p_covered) == 0:
-            return
-
-        p, pm = choice(p_covered)
-        p_index = build_index(p)
-
-        operator = Operator(tuple(('Rule',)),
-                            h.union(constraints), [])
-
-        found = False
-        for m in operator.match(p_index, initial_mapping=pm):
-            reverse_m = {m[a]: a for a in m}
-            pos_partial = set([rename(reverse_m, x) for x in p])
-            found = True
-            break
-
-        if not found:
-            return
-
-        # specialize current variables using pset?
-        for var in m:
-            limited_m = {var: m[var]}
-            new_h = frozenset([subst(limited_m, l) for l in h])
-
-            new_p_subset, new_n_subset = test_coverage(new_h, constraints,
-                                                       p_covered, n_covered)
-            new_p_covered = new_p_subset
-            new_p_uncovered = p_uncovered + [p for p in p_covered if p not in
-                                             new_p_subset]
-            new_n_covered = new_n_subset
-            new_n_uncovered = n_uncovered + [n for n in n_covered if n not in
-                                             new_n_subset]
-            new_c_length = c_length + 1
-            score = self.score(len(new_p_covered), len(new_p_uncovered),
-                               len(new_n_covered), len(new_n_uncovered),
-                               new_c_length)
-
-            yield Node(new_h, None, None, -1 * score,
-                       extra=(constraints, new_c_length, new_p_covered,
-                              new_p_uncovered, new_n_covered,
-                              new_n_uncovered, gensym))
-
-        # add new literals from pset
-        for l in pos_partial:
-            if l not in h:
-                l = generate_literal(l[0], len(l)-1, gensym)
-                # l = generalize_literal(l, gensym)
-
-                new_h = h.union([l])
-
-                new_p_subset, new_n_subset = test_coverage(new_h, constraints,
-                                                           p_covered,
-                                                           n_covered)
-                new_p_covered = new_p_subset
-                new_p_uncovered = p_uncovered + [p for p in p_covered if p not
-                                                 in new_p_subset]
-                new_n_covered = new_n_subset
-                new_n_uncovered = n_uncovered + [n for n in n_covered if n not
-                                                 in new_n_subset]
-                new_c_length = c_length + 1
-                score = self.score(len(new_p_covered), len(new_p_uncovered),
-                                   len(new_n_covered), len(new_n_uncovered),
-                                   new_c_length)
-
-                yield Node(new_h, None, None, -1 * score,
-                           extra=(constraints, new_c_length, new_p_covered,
-                                  new_p_uncovered, new_n_covered,
-                                  new_n_uncovered, gensym))
-
-    def gen_generalizations(self, node):
-        h = node.state
-        (constraints, c_length, p_covered, p_uncovered, n_covered, n_uncovered,
-         gensym) = node.extra
-
-        # remove literals
-        for literal in h:
-            removable = True
-            for ele in literal[1:]:
-                if not is_variable(ele):
-                    removable = False
-                    break
-                if (count_occurances(ele, h) > 1):
-                    removable = False
-                    break
-
-            if removable:
-                new_h = frozenset(x for x in h if x != literal)
-                new_pc_subset, new_nc_subset = test_coverage(new_h,
-                                                             constraints,
-                                                             p_uncovered,
-                                                             n_uncovered)
-                new_p_covered = p_covered + new_pc_subset
-                new_n_covered = n_covered + new_nc_subset
-                new_p_uncovered = [p for p in p_uncovered if p not in
-                                   new_pc_subset]
-                new_n_uncovered = [n for n in n_uncovered if n not in
-                                   new_nc_subset]
-                new_c_length = c_length - 1
-                score = self.score(len(new_p_covered), len(new_p_uncovered),
-                                   len(new_n_covered), len(new_n_uncovered),
-                                   new_c_length)
-
-                yield Node(new_h, None, None, -1 * score,
-                           extra=(constraints, new_c_length, new_p_covered,
-                                  new_p_uncovered, new_n_covered,
-                                  new_n_uncovered, gensym))
-
-        # replace constants with variables.
-        for literal in h:
-            for new_l in get_variablizations(literal, gensym):
-                new_h = frozenset([x if x != literal else new_l for
-                                   x in h])
-                new_pc_subset, new_nc_subset = test_coverage(new_h,
-                                                             constraints,
-                                                             p_uncovered,
-                                                             n_uncovered)
-                new_p_covered = p_covered + new_pc_subset
-                new_n_covered = n_covered + new_nc_subset
-                new_p_uncovered = [p for p in p_uncovered if p not in
-                                   new_pc_subset]
-                new_n_uncovered = [n for n in n_uncovered if n not in
-                                   new_nc_subset]
-                new_c_length = c_length - 1
-                score = self.score(len(new_p_covered), len(new_p_uncovered),
-                                   len(new_n_covered), len(new_n_uncovered),
-                                   new_c_length)
-
-                yield Node(new_h, None, None, -1 * score,
-                           extra=(constraints, new_c_length, new_p_covered,
-                                  new_p_uncovered, new_n_covered,
-                                  new_n_uncovered, gensym))
+        clause_vector = node.state
+        possible_literals, flip_weights, constraints, pset, nset = node.extra
+        index = weighted_choice(flip_weights)
+        new_j = choice([j for j in range(len(possible_literals[index]))
+                        if j != clause_vector[i]])
+        new_clause_vector = tuple(new_j if i == index else j for i, j in
+                                  enumerate(clause_vector))
+        score = clause_vector_score(new_clause_vector, possible_literals,
+                                    constraints, pset, nset)
+        return Node(new_clause_vector, None, None, -1 * score,
+                    extra=node.extra)
 
     def successors(self, node):
+        clause_vector = node.state
+        possible_literals, flip_weights, constraints, pset, nset = node.extra
 
-        for child in self.gen_specializations(node):
-            yield child
+        for index in possible_literals:
+            for new_j in range(len(possible_literals[index])):
+                if new_j == clause_vector[i]:
+                    continue
 
-        for child in self.gen_generalizations(node):
-            yield child
+                new_clause_vector = tuple(new_j if i == index else j for i, j
+                                          in enumerate(clause_vector))
+                score = clause_vector_score(new_clause_vector,
+                                            possible_literals, constraints,
+                                            pset, nset)
+                yield Node(new_clause_vector, None, None, -1 * score,
+                            extra=node.extra)
 
 
 class IncrementalHeuristic(object):
@@ -424,7 +209,7 @@ class IncrementalHeuristic(object):
 
     def compute_bottom_clause(self, x, mapping):
         reverse_m = {mapping[a]: a for a in mapping}
-        print("REVERSEM", reverse_m)
+        # print("REVERSEM", reverse_m)
         partial = set([rename(reverse_m, l) for l in x])
         return frozenset(partial)
 
@@ -443,7 +228,7 @@ class IncrementalHeuristic(object):
 
         if self.h is None and y == 1:
             self.h = self.compute_bottom_clause(x, mapping)
-            print("ADDING BOTTOM", self.h)
+            # print("ADDING BOTTOM", self.h)
 
         if self.h is not None:
             self.h = optimize_clause(self.h, self.constraints, self.pset,
@@ -457,7 +242,7 @@ class IncrementalHeuristic(object):
                                  len(p_uncovered), len(n_covered),
                                  len(n_uncovered), c_length)
 
-            print("OVERALL SCORE", score)
+            # print("OVERALL SCORE", score)
 
 
 if __name__ == "__main__":
@@ -484,13 +269,13 @@ if __name__ == "__main__":
 
     learner = IncrementalHeuristic()
 
-    # for i, x in enumerate(X):
-    #     print("Adding the following instance (%i):" % y[i])
-    #     pprint(x)
-    #     learner.ifit(tuple([]), x, y[i])
-    #     print("Resulting hset")
-    #     print(learner.get_hset())
-    #     print(len(learner.get_hset()))
+    for i, x in enumerate(X):
+        print("Adding the following instance (%i):" % y[i])
+        pprint(x)
+        learner.ifit(tuple([]), x, y[i])
+        print("Resulting hset")
+        print(learner.get_hset())
+        print(len(learner.get_hset()))
 
     p1 = {('person', 'a'),
           ('person', 'b'),
@@ -511,13 +296,12 @@ if __name__ == "__main__":
           ('parent', 'e', 'f'),
           ('parent', 'f', 'g')}
 
-
     X = [p1, n1, p2]
     y = [1, 0, 1]
     t = [('a', 'c'), ('a', 'g'), ('e', 'g')]
 
     learner = IncrementalHeuristic(args=('?A', '?B'),
-                                   constraints=frozenset([('person', '?A'), 
+                                   constraints=frozenset([('person', '?A'),
                                                           ('person', '?B')]))
 
     for i, x in enumerate(X):
@@ -527,4 +311,3 @@ if __name__ == "__main__":
         print("Resulting hset")
         print(learner.get_hset())
         print(len(learner.get_hset()))
- 

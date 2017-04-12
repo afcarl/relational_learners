@@ -1,11 +1,27 @@
 """
 Standard functions used to support relational learning
 """
+from random import uniform
+
 from fo_planner import Operator
 from fo_planner import build_index
 # from planners.fo_planner import subst
 from fo_planner import is_variable
 from fo_planner import extract_strings
+
+
+def weighted_choice(choices):
+    """
+    A weighted version of choice.
+    """
+    total = sum(w for w, c in choices)
+    r = uniform(0, total)
+    upto = 0
+    for w, c in choices:
+        if upto + w >= r:
+            return c
+        upto += w
+    assert False, "Shouldn't get here"
 
 
 def get_variablizations(literal):
@@ -50,6 +66,7 @@ def rename(mapping, literal):
     """
     return tuple(mapping[ele] if ele in mapping else rename(mapping, ele) if
                  isinstance(ele, tuple) else ele for ele in literal)
+
 
 def generate_literal(relation, arity, gensym):
     """
