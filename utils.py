@@ -8,19 +8,16 @@ from fo_planner import is_variable
 from fo_planner import extract_strings
 
 
-def score(self, n_pos, n_neg, length):
-    return n_pos - n_neg - 0.01 * length
-
-
-def get_variablizations(literal, gensym):
+def get_variablizations(literal):
     for i, ele in enumerate(literal[1:]):
         if isinstance(ele, tuple):
-            for inner in get_variablizations(ele, gensym):
+            for inner in get_variablizations(ele):
                 yield tuple([literal[0]] + [inner if j == i else iele for j,
                                             iele in enumerate(literal[1:])])
         elif not is_variable(ele):
-            yield tuple([literal[0]] + [gensym() if j == i else iele for j,
-                                        iele in enumerate(literal[1:])])
+            yield tuple([literal[0]] + ['?gen%i' % hash(ele) if j == i else
+                                        iele for j, iele in
+                                        enumerate(literal[1:])])
 
 
 def count_occurances(var, h):
