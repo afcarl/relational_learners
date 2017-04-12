@@ -59,7 +59,7 @@ def compute_bottom_clause(x, mapping):
     return frozenset(partial)
 
 
-def optimize_clause(h, constraints, pset, nset, gensym):
+def optimize_clause(h, constraints, pset, nset):
     """
     Returns the set of most specific generalization of h that do NOT
     cover x.
@@ -112,6 +112,10 @@ def optimize_clause(h, constraints, pset, nset, gensym):
 
     flip_weights = [(len(possible_literals[i])-1, i) for i in
                     possible_literals]
+    # size = 1
+    # for w, _ in flip_weights:
+    #     size *= (w + 1)
+    # print("SIZE OF SEARCH SPACE:", size)
 
     num_successors = sum([w for w, c in flip_weights])
     temp_length = 2 * num_successors
@@ -232,7 +236,7 @@ class IncrementalHeuristic(object):
 
         if self.h is not None:
             self.h = optimize_clause(self.h, self.constraints, self.pset,
-                                     self.nset, lambda: self.gensym())
+                                     self.nset)
             c_length = clause_length(self.h)
             p_covered, n_covered = test_coverage(self.h, self.constraints,
                                                  self.pset, self.nset)
